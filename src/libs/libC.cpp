@@ -784,6 +784,67 @@ LIB_DEFINE(InitLibcInternal_1) {
 
 namespace LibC {
 
+// Itanium C++ ABI guard for function-local statics. Byte 0 of the 64-bit guard means "initialized";
+// byte 1 is used here to mark "initialization in progress" so other threads wait for the constructor.
+static std::mutex              g_cxa_guard_mutex;
+static std::condition_variable g_cxa_guard_cv;
+
+static KYTY_SYSV_ABI int cxa_guard_acquire(uint64_t* guard) {
+	auto*                        g = reinterpret_cast<volatile uint8_t*>(guard);
+	std::unique_lock<std::mutex> lock(g_cxa_guard_mutex);
+	for (;;) {
+		if (g[0] != 0) {
+			return 0; // already constructed
+		}
+		if (g[1] == 0) {
+			g[1] = 1; // this thread constructs it
+			return 1;
+		}
+		g_cxa_guard_cv.wait(lock); // another thread is constructing it
+	}
+}
+
+static KYTY_SYSV_ABI void cxa_guard_release(uint64_t* guard) {
+	auto* g = reinterpret_cast<volatile uint8_t*>(guard);
+	{
+		std::lock_guard<std::mutex> lock(g_cxa_guard_mutex);
+		g[1] = 0;
+		g[0] = 1;
+	}
+	g_cxa_guard_cv.notify_all();
+}
+
+static KYTY_SYSV_ABI void cxa_guard_abort(uint64_t* guard) {
+	auto* g = reinterpret_cast<volatile uint8_t*>(guard);
+	{
+		std::lock_guard<std::mutex> lock(g_cxa_guard_mutex);
+		g[1] = 0;
+	}
+	g_cxa_guard_cv.notify_all();
+}
+
+static KYTY_SYSV_ABI float libc_atan2f(float y, float x) {
+	return std::atan2(y, x);
+}
+
+static KYTY_SYSV_ABI float libc_tanf(float x) {
+	return std::tan(x);
+}
+
+static KYTY_SYSV_ABI float libc_log10f(float x) {
+	return std::log10(x);
+}
+
+static KYTY_SYSV_ABI float libc_powf(float x, float y) {
+	return std::pow(x, y);
+}
+
+static KYTY_SYSV_ABI int libc_vsnprintf(char* s, size_t n, const char* format, VaList* c) {
+	PRINT_NAME();
+
+	return GetGuestVsnprintfFunc()(s, n, format, c);
+}
+
 LIB_DEFINE(InitLibC_1) {
 	LibcInternal::InitLibcInternal_1(s);
 
@@ -806,6 +867,14 @@ LIB_DEFINE(InitLibC_1) {
 	LIB_FUNC("tsvEmnenz48", LibC::cxa_atexit);
 	LIB_FUNC("H2e8t5ScQGc", LibC::cxa_finalize);
 	LIB_FUNC("DiGVep5yB5w", LibC::std_execute_once);
+	LIB_FUNC("3GPpjQdAMTw", LibC::cxa_guard_acquire);
+	LIB_FUNC("9rAeANT2tyE", LibC::cxa_guard_release);
+	LIB_FUNC("2emaaluWzUw", LibC::cxa_guard_abort);
+	LIB_FUNC("EH-x713A99c", LibC::libc_atan2f);
+	LIB_FUNC("ZE6RNL+eLbk", LibC::libc_tanf);
+	LIB_FUNC("lhpd6Wk6ccs", LibC::libc_log10f);
+	LIB_FUNC("1D0H2KNjshE", LibC::libc_powf);
+	LIB_FUNC("Q2V+iqvjgC0", LibC::libc_vsnprintf);
 }
 
 } // namespace LibC
